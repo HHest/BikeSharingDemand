@@ -82,40 +82,10 @@ features <- extractFeatures(train)
 # break up data by working day and working hour
 dfs <- partitionByDayHourType(train, features)
 fits <- lapply(dfs, doTraining, 6)
-summary(fits[[1]])
-summary(fits[[2]])
-summary(fits[[3]])
+
+fits[[1]]$result
+fits[[2]]$result
+fits[[3]]$result
+
 #plot(fits[[1]]$finalModel)
 
-
-#=======================================
-cvfile <- "./data/crossValidationSplit.csv"
-cv <- read.csv(cvfile)
-# Contruct features
-cvf <- extractFeatures(cv)
-# break up data by working day and working hour
-cvdfs <- partitionByDayHourType(cv, cvf)
-preds <- mapply(predict, fits, cvdfs )
-cvf$pCount <- 0
-cvf$pCount[cvf$workingHour==0] <- preds[[1]]
-cvf$pCount[cvf$workingHour==1] <- preds[[2]]
-cvf$pCount[cvf$workingHour==2] <- preds[[3]]
-cv2 <- cv
-cv2$pCount <- sapply(sapply(cvf$pCount, max, 0), round)
-
-plot(cv2$count, cv2$pCount)
-
-#=======================================
-testfile <- "./data/test.csv"
-test <- read.csv(testfile)
-# Contruct features
-testf <- extractFeatures(test)
-# break up data by working day and working hour
-testdfs <- partitionByDayHourType(test, testf, hasCount=F)
-preds <- mapply(predict, fits, testdfs )
-testf$pCount <- 0
-testf$pCount[testf$workingHour==0] <- preds[[1]]
-testf$pCount[testf$workingHour==1] <- preds[[2]]
-testf$pCount[testf$workingHour==2] <- preds[[3]]
-submission <- data.frame(datetime = test$datetime, count = sapply(sapply(testf$pCount, max, 0), round) )
-write.csv(submission, file="./data/submission.csv", row.names=F, quote=F)

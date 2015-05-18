@@ -1,0 +1,75 @@
+---
+title: "Bike Sharing Demand Prediction"
+author: "Thao Tran"
+date: "18 May 2015"
+output: html_document
+---
+
+### Overview
+
+Study the Bike Sharing Demand data on Kaggle <https://www.kaggle.com/c/bike-sharing-demand> and perform predictions of total rental on this set.
+
+### Available Data
+
+Two years of hourly bike rental data, plus additional information:
+
+**datetime** - hourly date + timestamp  
+
+**season** -  1 = spring, 2 = summer, 3 = fall, 4 = winter
+
+**holiday** - whether the day is considered a holiday
+
+**workingday** - whether the day is neither a weekend nor holiday
+
+**weather** - 1: Clear, Few clouds, Partly cloudy, Partly cloudy
+2: Mist + Cloudy, Mist + Broken clouds, Mist + Few clouds, Mist
+3: Light Snow, Light Rain + Thunderstorm + Scattered clouds, Light Rain + Scattered clouds
+4: Heavy Rain + Ice Pallets + Thunderstorm + Mist, Snow + Fog 
+
+**temp** - temperature in Celsius
+
+**atemp** - "feels like" temperature in Celsius
+
+**humidity** - relative humidity
+
+**windspeed** - wind speed
+
+**casual** - number of non-registered user rentals initiated
+
+**registered** - number of registered user rentals initiated
+
+**count** - number of total rentals
+
+Kaggle provides two sets of data: train.csv, which are rental data from days 1--19 of each month, and test.csv, which are rental data from the rest of the month. The latter set can be used to generate predictions, which can then be submitted to Kaggle for rating.
+
+In this analysis, I divided the original train.csv further into two sets: trainSplit.csv, which are from days 1--15 of each month, and crossValidationSplit.csv, which are from days 16--19 of each month. I use the trainSplit.csv data to train the proposed models, and crossValicationSplit.csv to choose amongst the models. The test.csv data set is reserved for predictions and submissions only. This approach avoids overfitting the models with test data.
+
+### Exploratory Analysis
+
+### Training
+
+### Validation
+
+### Prediction
+
+### Further Directions
+
+
+
+
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+summary(cars)
+```
+
+You can also embed plots, for example:
+
+```{r, echo=FALSE}
+plot(cars)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
