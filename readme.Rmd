@@ -7,7 +7,17 @@ output: html_document
 
 ### Overview
 
-Study the Bike Sharing Demand data on Kaggle <https://www.kaggle.com/c/bike-sharing-demand> and perform predictions of total rental on this set.
+Study the Bike Sharing Demand data on Kaggle <https://www.kaggle.com/c/bike-sharing-demand> and perform predictions of total rental on this set. 
+
+I performed the analysis in R, using the packages:
+
+```{r, message=FALSE, warning=FALSE}
+library(lubridate)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+library(caret)
+```
 
 ### Available Data
 
@@ -21,10 +31,12 @@ Two years of hourly bike rental data, plus additional information:
 
 **workingday** - whether the day is neither a weekend nor holiday
 
-**weather** - 1: Clear, Few clouds, Partly cloudy, Partly cloudy
-2: Mist + Cloudy, Mist + Broken clouds, Mist + Few clouds, Mist
-3: Light Snow, Light Rain + Thunderstorm + Scattered clouds, Light Rain + Scattered clouds
-4: Heavy Rain + Ice Pallets + Thunderstorm + Mist, Snow + Fog 
+**weather**:
+
+1. Clear, Few clouds, Partly cloudy, Partly cloudy
+2. Mist + Cloudy, Mist + Broken clouds, Mist + Few clouds, Mist
+3. Light Snow, Light Rain + Thunderstorm + Scattered clouds, Light Rain + Scattered clouds
+4. Heavy Rain + Ice Pallets + Thunderstorm + Mist, Snow + Fog 
 
 **temp** - temperature in Celsius
 
@@ -32,7 +44,7 @@ Two years of hourly bike rental data, plus additional information:
 
 **humidity** - relative humidity
 
-**windspeed** - wind speed
+**windspeed** - wind speed [in m/s?]
 
 **casual** - number of non-registered user rentals initiated
 
@@ -42,34 +54,292 @@ Two years of hourly bike rental data, plus additional information:
 
 Kaggle provides two sets of data: train.csv, which are rental data from days 1--19 of each month, and test.csv, which are rental data from the rest of the month. The latter set can be used to generate predictions, which can then be submitted to Kaggle for rating.
 
-In this analysis, I divided the original train.csv further into two sets: trainSplit.csv, which are from days 1--15 of each month, and crossValidationSplit.csv, which are from days 16--19 of each month. I use the trainSplit.csv data to train the proposed models, and crossValicationSplit.csv to choose amongst the models. The test.csv data set is reserved for predictions and submissions only. This approach avoids overfitting the models with test data.
+### GitHub & Kaggle
 
-### Exploratory Analysis
+This work is available on GitHub: <https://github.com/HHest/BikeSharingDemand>.
+
+Here one can find:
+
+**readme.Rmd**: this document, which was produced using RStudio and Knitr.
+
+**createCVSet.R**: script to create a reduced training set and cross validation set for model comparison.
+
+**Exploratory.R**: script to examine the data to select features.
+
+**train.R**: to perform training to generate the fit parameters.
+
+**cv.R**: to generate cross validation errors to allow comparison of differnt learning strategies.
+
+**predict.R**: to produce a Kaggle submission file, from the test data set.
+
+The original Kaggle data sets, and the reduced training set and cross validation set, are also stored here for convenience.
+
+My Kaggle page is <https://www.kaggle.com/users/327606/ttran>
+
+### Cross Validation Data
+
+In this analysis, I divided the original train.csv further into two sets: trainSplit.csv, which are from days 1--15 of each month, and crossValidationSplit.csv, which are from days 16--19 of each month. I use the trainSplit.csv data to train the proposed models, and crossValicationSplit.csv to choose amongst the models. The test.csv data set is reserved for predictions and submissions only.
+
+This approach prevents us from overfitting the models with test data. And in the case of the Kaggle competition, where the test data set does not contain the dependent variable, we cannot even fit with the test data at all. 
+
+The script to perform the data division is "createCVSet.R"
+
+### Exploratory Analysis and Features Selection
+
+Starting from the trainSplit.csv data, one can plot out the "count" as a function of various quantities. In this manner, one can gain some insights on the behavior of the rental data. In particular I am interested in understanding which variables have significant influence on the rental number. 
+
+The "Exploratory.R" scripts collects the various attempts I made in this regard.
+
+As we have the rental data by the hour, and surely rentals change greatly for the different hours of the day (e.g. night vs day), I supplemented the data set with the hour info.
+
+```{r}
+trainfile <- "./data/trainSplit.csv"
+dfT <- read.csv(trainfile)
+dfT <- ( dfT
+		 %>% mutate(
+		 		   dt = ymd_hms(as.character(datetime)), 
+		 		   hour = hour(dt) # hour of day must be important?
+		 )
+)
+group_hour <- group_by(dfT, hour, workingday)
+sum_hour <- summarize(group_hour, avgRentals = mean(count), std = sd(count))
+g <- ( ggplot(sum_hour, aes(hour, avgRentals)) 
+	+ geom_errorbar(aes(ymin=avgRentals-std, ymax=avgRentals+std), color="gray")
+	+ geom_point(size=2, shape=21) + geom_line() 
+	+ facet_grid(. ~ workingday) 
+	+ geom_smooth(method = "lm", formula="y~poly(x,6)") 
+	+ ggtitle("Average Rentals by Hour in a Day")); g
+# workingday across the facets
+```
+
+From the above graph, one can see that on non-working days, the rentals peak around 13:00, whereas during working days, the rentals come in two peaks, at the beginning of the workday 8:00, and at the end of the workday 17:00. The peak at around 13:00, which appears on non-working days, is also present, but much smaller. One might associate the 13:00 peak with casual/tourists rentals, whereas the 8:00 & 17:00 peaks come from registered/commuters rentals.
+
+To help isolate these three peaks, I introduced two labels:
+
+**workingHour**:
+
+* All the hours in a non-working day = 0
+* The non-working hours in a working day = 1
+* The working hours in a working day = 2. 
+
+This variable makes workingday redundant. I.e. `workingday = 0` is equal to `workingHour = 0`, and `workingday = 1` is `workingHour = {1, 2}`. 
+
+**hourAdj** - the hour in the day, minus 8 hrs. I.e. 8:00 -> 0:00.
+
+In doing so, I get three populations, in which I can perform a 6th order polynomial fit to capture the trend.
+
+```{r}
+dfT <- ( dfT
+		 %>% mutate(one=1, 
+		 		   dt = ymd_hms(as.character(datetime)), 
+		 		   hour = hour(dt), # hour of day must be important?
+				   hourAdj=hour(dt - dhours(8)), 
+				   workingHour = ifelse( workingday==0, 
+				   	0, ifelse( (0 <= hourAdj) & (hourAdj <= 9), 2, 1) 
+				   )
+		 )
+)
+group_hour <- group_by(dfT, hourAdj, workingHour)
+sum_hour <- summarize(group_hour, avgRentals = mean(count), std = sd(count))
+g <- ( ggplot(sum_hour, aes(hourAdj, avgRentals)) 
+	+ geom_errorbar(aes(ymin=avgRentals-std, ymax=avgRentals+std), color="gray")
+	+ geom_point(size=2, shape=21) + geom_line() 
+	+ facet_grid(. ~ workingHour) 
+	+ geom_smooth(method = "lm", formula="y~poly(x,6)") 
+	+ ggtitle("Average Rentals by Adjusted Hour and workingHour Type")); g
+# workingHour classification across the facets
+```
+
+The dependence of rentals on **weather** and **season** seem fairly linear, albeit there are few variables to establish a trend. (It is surprising how good Washington DC weather is!)
+
+```{r}
+g<- ( ggplot(dfT, aes(weather, count)) + geom_point(alpha=.1) 
+	  + facet_grid(. ~ season) )
+group_season_weather <- group_by(dfT, season, weather)
+sum_season_weather <- summarize(group_season_weather, 
+								avgRentals = mean(count), 
+								std=sd(count), 
+								weatherDays = sum(one))
+g1 <- ( ggplot(sum_season_weather, aes(weather, avgRentals)) 
+	+ geom_errorbar(aes(ymin=avgRentals-std, ymax=avgRentals+std), color="gray")
+	+ geom_point(size=2, shape=21)
+	+ facet_grid(. ~ season)
+	+ geom_smooth(method = "lm") )
+# plot the number of days in the groups
+g2 <- ( ggplot(sum_season_weather, aes(weather, weatherDays)) 
+		+ geom_line() + facet_grid(. ~ season) )
+grid.arrange(g, g1, g2, nrow=3, main="Rentals by Weather")
+# season across the facets
+```
+
+The Spring plot shows an entry for the heavy rain weather (=4), which came from only one hour in the two year period. This creates a skew in the trend, and probably should be thrown away.
+
+Here (and later on), I also plotted the $x$-Days, which is a count of the number of days in a particular category $x$. This provided 
+
+```{r}
+# one rainy day outlier, which one should really throw away?
+dfT[dfT$weather==4,] # one rainy hour
+```
+
+One might think the rental numbers would depend non-linearly on the **temp**/**atemp**. However, if there is one, it is hard for me to interpret. It is surprising, for example, that one might get more rentals at 40 C than at 30 C in "feel like" temperature. 
+
+```{r}
+g1<- ( ggplot(dfT, aes(temp, count)) + geom_point(alpha=.1) 
+	   + geom_smooth(method = "lm") )
+group_temp <- group_by(dfT, temp)
+sum_temp <- summarize(group_temp, 
+					  avgRentals = mean(count), 
+					  std=sd(count), 
+					  tempDays = sum(one))
+g2 <- ( ggplot(sum_temp, aes(temp, avgRentals)) 
+	+ geom_errorbar(aes(ymin=avgRentals-std, ymax=avgRentals+std), color="gray")
+	+ geom_point(size=2, shape=21) + geom_line() + geom_smooth(method = "lm") )
+g3 <- ggplot(sum_temp, aes(temp, tempDays)) + geom_line()
+# atemp 
+g4<- ( ggplot(dfT, aes(atemp, count)) + geom_point(alpha=.1) 
+	   + geom_smooth(method = "lm") )
+group_atemp <- group_by(dfT, atemp)
+sum_atemp <- summarize(group_atemp, 
+					   avgRentals = mean(count), 
+					   std=sd(count), 
+					   atempDays = sum(one))
+g5 <- ( ggplot(sum_atemp, aes(atemp, avgRentals)) 
+	+ geom_errorbar(aes(ymin=avgRentals-std, ymax=avgRentals+std), color="gray")
+	+ geom_point(size=2, shape=21) + geom_line() + geom_smooth(method = "lm") )
+g6 <- ggplot(sum_atemp, aes(atemp, atempDays)) + geom_line()
+grid.arrange(g1, g2, g3, g4, g5, g6, 
+			 nrow=2, ncol=3, main="Rentals by Temperature")
+```
+
+For the **humidity**, there is a decrease in rental as the humidity rises, as one might expect. The trend also appears linear.
+
+```{r, fig.height=2}
+g <- ( ggplot(dfT, aes(humidity, count)) + geom_point(alpha=.1) 
+	   + geom_smooth(method = "lm") )
+group_humidity <- group_by(dfT, humidity)
+sum_humidity <- summarize(group_humidity, 
+						  avgRentals = mean(count), 
+						  humidityDays = sum(one))
+g1 <- ( ggplot(sum_humidity, aes(humidity, avgRentals)) + geom_line() 
+		+ geom_smooth(method = "lm") )
+g2 <- ggplot(sum_humidity, aes(humidity, humidityDays)) + geom_line()
+grid.arrange(g, g1, g2, ncol=3, main="Rentals by Humidity")
+```
+
+Rentals also depend on **windspeed**, and here the relationship is non-linear. In the analysis, when doing multivariate regression, I took the relationship to be quadratic.
+
+```{r, fig.height=2}
+g<- ggplot(dfT, aes(windspeed, count)) + geom_point(alpha=.1) + geom_smooth()
+group_windspeed <- group_by(dfT, windspeed)
+sum_windspeed <- summarize(group_windspeed, 
+						   avgRentals = mean(count), 
+						   windspeedDays = sum(one))
+g1 <- ( ggplot(sum_windspeed, aes(windspeed, avgRentals)) + geom_line() 
+		+ geom_smooth(method = "lm", formula="y~poly(x,2)") );
+g2 <- ggplot(sum_windspeed, aes(windspeed, windspeedDays)) + geom_line();
+grid.arrange(g, g1, g2, ncol=3, main="Rentals by WindSpeed")
+```
+
+Finally, there doesn't seem to be a strong difference between a **holiday** vs a non-holiday. In the analysis, I've chosen to ignore this variable. This was also done for practical reasons as a near-zero-variance regressor can cause instability in non-tree-based models.
+
+```{r}
+group_holiday <- group_by(dfT, holiday)
+sum_holiday <- summarize(group_holiday, avgRentals = mean(count), std=sd(count))
+g <- ( ggplot(sum_holiday, aes(holiday, avgRentals)) 
+	   + geom_bar(stat="identity") 
+	   + ggtitle("Rentals by Holiday")); g
+```
+The training data set has information about "casual" and "registered" users. I have not found a way to utilize these data either. Please see the last section for further discussion.
 
 ### Training
 
-### Validation
+I used the caret framework to perform model training. The code is in "train.R". 
+
+Due to the strong influence of workingday+workingHour on the trend, I segregated the populations by the "workingHour" parameter, which also contains the workingday info. Training was then done separately for these three populations. During the cross validation and prediction stages, the same segregation procedure was applied, and the corresponding fitting parameters from the training stage were used for each of the population.
+
+During training, one can specify the `method` variable to control the overall learning strategy. Supported methods are `{"lm", "glm", "rf", "rf_poly"}`, where "glm" is hardcoded to use the Poisson distribution.
+
+The methods "lm", "glm", "rf_poly" have additional control parameters: nPolyWind, and nPolyHour, which set the order of the polynomial function used for (respectively) the "windspeed" and "hourAdj" regressors.
+
+For the method "rf", I kept all the default settings of the random forest, except for the trainControl. Because the data is in a time series, and because there is such a strong daily pattern, I configured trainControl to take whole days in its internal training sets and cross validation sets.
+
+First, I performed training with `method="lm"`, which is a simple multivariate linear model with the following configuration:
+
+* The "season" and "weather" regressors treated as factors
+* The "temp", "atemp", and "humidity" regressors are linear functions
+* The "windspeed", and "hourAdj" regressors are polynomial functions
+
+Because the dependent variable "count" is a count, one should not use a linear model when the counts can be low, as they can be during the night hours. In those instances, the model has no contraint from producing a negative count prediction. However, since it is so quick to run, I used it as my starting point, particularly to explore the choice of polynomial coefficients.
+
+A more realistic model is the generalized linear model with Poisson distribution. This model takes care of the issue of negative predictions. As we will see, it also improved the prediction.
+
+Finally I also tried the popular random forest method, which gave the best prediction. 
+
+### Validation and Model Selection
+
+In order to select the polynomial degrees of freedom for the "windspeed" regressor and "hourAdj" regressor, I monitored the mean squared error for the training runs, and compared it to the mean squared error for the runs against the "cross validation" set. The script I used is "cv.R"
+
+As mentioned above, I began with the linear model for this validation study. As the degree of freedom was increased, both the training error and the cross validation error improved. However, at some point one expects that the cross validation error would worsen, as the model over-fits the training data. In this study, I never got to that point. Instead I stopped when the improvement seems minimal compared to the increase in degree of freedom (dof).
+
+Once I have settled on the dof = 2 for the "windspeed" polynomial, I then switched to the generalized linear model with Poisson distribution. Here, I studied the errors under change in the dof of the "hourAdj" regressor.
+
+Even though the random forest does its own cross validation internally, for the purpose of model comparison, I still use the reduced training set, and judge it with the cross validation set.
+
+Below are the plots of the training error and the cross validation error of each method (per vertical facets), with respect to nPolyWind (per horizontal facets) and nPolyHour. 
+
+Interestingly "rf\_poly" is not at all sensitive to the dictated polynomial order.  This suggests that the random forest implementation does not pay attention to the specified polynomials in the regression formula. However, "rf\_poly" is an improvement over "rf", with the difference being the treatment of "season" and "weather" as factors, rather than numerics.
+
+```{r, echo=FALSE, fig.keep='all'}
+g <- ( ggplot(filter(errors, method %in% c("lm", "glm", "rf_poly")), aes(nPolyHour, Err, colour=type)) 
+	   + geom_line() + geom_point() + scale_color_brewer(palette="Set1")
+	   + facet_grid(method ~ nPolyWind, drop=F) 
+	   + ggtitle("Training Error vs Cross Validation Error\nby Order of Polynomials")); g
+# nPolyWind along the horizontal facet, and method along the vertical facet
+```
+
+Settling on nPolyWind = 2, and nPolyHour = 6, I compared the cross validation errors of different models.  The two "rf" methods do slightly better than the glm method.
+
+```{r, echo=FALSE, fig.keep='all'}
+g1 <- ( ggplot(filter(errors, nPolyWind==2, nPolyHour==6, type == "cv", method != "rf_submit"), aes(method, Err)) 
+		+ geom_bar(stat="identity") 
+		+ ggtitle("Cross Validation Errors by Model")); g1
+```
+
+I also accumulated the root mean square log error (RMSLE) which Kaggle uses to rank the submissions. Naturally these numbers were calculated from the cross validation data set. 
+
+One can see that the "rf" method performed best, with the "glm" Poisson method roughly the same. Note: one cannot put much weight on the "rf\_submit" result, as this was done on the full training data set, of which the cross validation data is a subset. Please see below for the actual Kaggle RMSLE for "rf\_submit"
+
+```{r, echo=FALSE}
+g2 <- (ggplot(filter(errors, nPolyWind == 2, nPolyHour == 6, type == "cv"), aes(method, RMSLE)) 
+	   + geom_bar(stat="identity")
+	   + ggtitle("Cross Validation RMSLE by Model")); g2
+```
 
 ### Prediction
 
-### Further Directions
+Once the training step has been completed, I applied the fitted parameters to the test set to make predictions. The script used is "predict.R"
 
+Note, I applied an artificial cutoff to keep the prediction from going negative. For the generalized linear model with Poisson distribution, this cutoff would never be hit. The random forest also did not hit the cutoff.
 
+Kaggle gave the "lm" method (with nPolyWind = 2 and nPolyHour = 6) a RMSLE = 1.03501. The "glm" Poisson method (with nPolyWind = 2 and nPolyHour = 6) received a RMSLE = 0.50917.
 
+Kaggle gave the random forest method on the reduced training set a RMSLE = 0.49266 . The full training set is slightly better at RMSLE = 0.48582.
 
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r}
-summary(cars)
-```
-
-You can also embed plots, for example:
+For contrast, currently the mean value benchmark of the submissions is RMSLE = 1.58456.
 
 ```{r, echo=FALSE}
-plot(cars)
+methods = c("<Kaggle>", "lm", "glm", "rf", "rf_submit")
+kaggleRMSLE <- data.frame(method=factor(methods, levels=methods), RMSLE=c(1.58456, 1.03501, 0.50917, 0.49266, 0.48582))
+g <- ggplot(kaggleRMSLE, aes(method, RMSLE)) + geom_bar(stat="identity") + ggtitle("Kaggle RMSLE from Submissions"); g
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+### Future Directions
+
+Although the random forest gave the best result, there are many more parameters in this method that one can manipulate. One can spend more time optimizing them, rather than relying on the default settings as I have done.
+
+In addition, one can see that the temperature regressors have a complex shape. It is not clear that any of the models under consideration handles these regressors well. 
+
+The tempDays plot suggests there are certain temperature measurements less likely than others, which then produce striation in the "count" plot. Some of these dips in tempDays seem to be related to dips in rentals. However, there are also many exceptions, where strong dips in tempDays do not produce corresponding dips in rentals. 
+
+Finally, I have not tried to apply a neural network learning strategy. It should be interesting to see how that performs.
+

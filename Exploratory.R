@@ -23,7 +23,7 @@ dfT <- ( dfT
 
 group_hour <- group_by(dfT, hour, workingday)
 sum_hour <- summarize(group_hour, avgRentals = mean(count), std = sd(count))
-g <- ggplot(sum_hour, aes(hour, avgRentals, std)) + geom_point() + geom_line() + facet_grid(. ~ workingday) + geom_smooth(method = "lm", formula="y~poly(x,6)"); g
+g <- ggplot(sum_hour, aes(hour, avgRentals, std)) + geom_errorbar(aes(ymin=avgRentals-std, ymax=avgRentals+std), color="grey") + geom_point() + geom_line() + facet_grid(. ~ workingday) + geom_smooth(method = "lm", formula="y~poly(x,6)"); g
 
 # found peaks at 8:00, 12:00, and 17:00
 group_hour <- group_by(dfT, hour_minus8, workingday)
@@ -92,7 +92,7 @@ g<- ggplot(dfT, aes(humidity, count)) + geom_point(alpha=.1); g
 
 group_windspeed <- group_by(dfT, windspeed)
 sum_windspeed <- summarize(group_windspeed, avgRentals = mean(count), windspeedDays = sum(one))
-g1 <- ggplot(sum_windspeed, aes(windspeed, avgRentals)) + geom_line() + geom_smooth(method = "lm");
+g1 <- ggplot(sum_windspeed, aes(windspeed, avgRentals)) + geom_line() + geom_smooth(method = "lm", formula="y~poly(x,2)");
 g2 <- ggplot(sum_windspeed, aes(windspeed, windspeedDays)) + geom_line();
 grid.arrange(g1, g2, ncol=2)
 g<- ggplot(dfT, aes(windspeed, count)) + geom_point(alpha=.1); g
